@@ -634,19 +634,61 @@ with tab_broken:
 
 with tab_mass:
 
-st.subheader("🧾 Μαθητές με σύγκρουση στην ίδια τάξη")
+    st.subheader("🧾 Μαθητές με σύγκρουση στην ίδια τάξη")
 
-def build_conflict_in_same_class_report(xl_file: pd.ExcelFile) -> BytesIO:
-    bio = BytesIO()
-    summary_rows = []
-    with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
-        for idx, sheet in enumerate(xl_file.sheet_names, start=1):
-            df_raw = xl_file.parse(sheet_name=sheet)
+    def build_conflict_in_same_class_report(xl_file: pd.ExcelFile) -> BytesIO:
+        bio = BytesIO()
+        summary_rows = []
+        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+            for idx, sheet in enumerate(xl_file.sheet_names, start=1):
+                df_raw = xl_file.parse(sheet_name=sheet)
+                df_norm, _ = auto_rename_columns(df_raw)
+
+                # Υπολογισμός «ΣΥΓΚΡΟΥΣΗ» (μετρητής) και «ΣΥΓΚΡΟΥΣΗ_ΟΝΟΜΑ» (λίστα ονομάτων)
+                conf_counts, conf_names = compute_conflict_counts_and_names(df_norm)
+
+                df_conf = pd.DataFrame({
+                    "ΟΝΟΜΑ": df_norm.get("ΟΝΟΜΑ", pd.Series(dtype=str)),
+                    "ΤΜΗΜΑ": df_norm.get("ΤΜΗΜΑ", pd.Series(dtype=str)),
+                    "ΣΥΓΚΡΟΥΣΗ": conf_counts.astype(int),
+                    "ΣΥΓΚΡΟΥΣΗ_ΟΝΟΜΑ": conf_names,
+                })
+                df_conf = df_conf[df_conf["ΣΥΓΚΡΟΥΣΗ"] > 0].sort_values(["ΤΜΗΜΑ","ΟΝΟΜΑ"])
+
+                sheet_name = f"S{idx}_CONFLICT_IN_SAME_CLASS"
+                if df_conf.empty:
+                    pd.DataFrame([{"Μήνυμα": "— Καμία καταγραφή —"}]).to_excel(writer, index=False, sheet_name=sheet_name)
+                else:
+                    df_conf.to_excel(writer, index=False, sheet_name=sheet_name)
+
+                summary_rows.append({
+                    "Index": idx,
+                    "Original sheet name": sheet,
+                    "S-code": f"S{idx}",
+                    "Students with ≥1 Conflict in Same Class": int((conf_counts.fillna(0) > 0).sum()),
+                })
+            # Συνοπτική καρτέλα
+            pd.DataFrame(summary_rows).to_excel(writer, index=False, sheet_name="SUMMARY")
+        bio.seek(0)
+        return bio
+
+    # Ζωντανή σύνοψη & προβολή ανά sheet
+    live_rows = []
+    for sheet in xl.sheet_names:
+        df_raw = xl.parse(sheet_name=sheet)
+        df_norm, _ = auto_rename_columns(df_raw)
+        conf_counts, conf_names = compute_conflict_counts_and_names(df_norm)
+        n_conf = int((conf_counts.fillna(0) > 0).sum())
+        live_rows.append({"Σενάριο (sheet)": sheet, "Μαθητές με Σύγκρουση στην ίδια τάξη (>=1)": n_conf})
+
+    st.dataframe(pd.DataFrame(live_rows).sort_values("Σενάριο (sheet)"), use_container_width=True)
+
+    with st.expander("🔎 Αναλυτική προβολή ανά sheet", expanded=False):
+        for sheet in xl.sheet_names:
+            st.markdown(f"**• {sheet}**")
+            df_raw = xl.parse(sheet_name=sheet)
             df_norm, _ = auto_rename_columns(df_raw)
-
-            # Υπολογισμός «ΣΥΓΚΡΟΥΣΗ» (μετρητής) και «ΣΥΓΚΡΟΥΣΗ_ΟΝΟΜΑ» (λίστα ονομάτων)
             conf_counts, conf_names = compute_conflict_counts_and_names(df_norm)
-
             df_conf = pd.DataFrame({
                 "ΟΝΟΜΑ": df_norm.get("ΟΝΟΜΑ", pd.Series(dtype=str)),
                 "ΤΜΗΜΑ": df_norm.get("ΤΜΗΜΑ", pd.Series(dtype=str)),
@@ -654,55 +696,13 @@ def build_conflict_in_same_class_report(xl_file: pd.ExcelFile) -> BytesIO:
                 "ΣΥΓΚΡΟΥΣΗ_ΟΝΟΜΑ": conf_names,
             })
             df_conf = df_conf[df_conf["ΣΥΓΚΡΟΥΣΗ"] > 0].sort_values(["ΤΜΗΜΑ","ΟΝΟΜΑ"])
+            st.dataframe(df_conf, use_container_width=True)
 
-            sheet_name = f"S{idx}_CONFLICT_IN_SAME_CLASS"
-            if df_conf.empty:
-                pd.DataFrame([{"Μήνυμα": "— Καμία καταγραφή —"}]).to_excel(writer, index=False, sheet_name=sheet_name)
-            else:
-                df_conf.to_excel(writer, index=False, sheet_name=sheet_name)
-
-            summary_rows.append({
-                "Index": idx,
-                "Original sheet name": sheet,
-                "S-code": f"S{idx}",
-                "Students with ≥1 Conflict in Same Class": int((conf_counts.fillna(0) > 0).sum()),
-            })
-        # Συνοπτική καρτέλα
-        pd.DataFrame(summary_rows).to_excel(writer, index=False, sheet_name="SUMMARY")
-    bio.seek(0)
-    return bio
-
-# Ζωντανή σύνοψη & προβολή ανά sheet
-live_rows = []
-for sheet in xl.sheet_names:
-    df_raw = xl.parse(sheet_name=sheet)
-    df_norm, _ = auto_rename_columns(df_raw)
-    conf_counts, conf_names = compute_conflict_counts_and_names(df_norm)
-    n_conf = int((conf_counts.fillna(0) > 0).sum())
-    live_rows.append({"Σενάριο (sheet)": sheet, "Μαθητές με Σύγκρουση στην ίδια τάξη (>=1)": n_conf})
-
-st.dataframe(pd.DataFrame(live_rows).sort_values("Σενάριο (sheet)"), use_container_width=True)
-
-with st.expander("🔎 Αναλυτική προβολή ανά sheet", expanded=False):
-    for sheet in xl.sheet_names:
-        st.markdown(f"**• {sheet}**")
-        df_raw = xl.parse(sheet_name=sheet)
-        df_norm, _ = auto_rename_columns(df_raw)
-        conf_counts, conf_names = compute_conflict_counts_and_names(df_norm)
-        df_conf = pd.DataFrame({
-            "ΟΝΟΜΑ": df_norm.get("ΟΝΟΜΑ", pd.Series(dtype=str)),
-            "ΤΜΗΜΑ": df_norm.get("ΤΜΗΜΑ", pd.Series(dtype=str)),
-            "ΣΥΓΚΡΟΥΣΗ": conf_counts.astype(int),
-            "ΣΥΓΚΡΟΥΣΗ_ΟΝΟΜΑ": conf_names,
-        })
-        df_conf = df_conf[df_conf["ΣΥΓΚΡΟΥΣΗ"] > 0].sort_values(["ΤΜΗΜΑ","ΟΝΟΜΑ"])
-        st.dataframe(df_conf, use_container_width=True)
-
-st.download_button(
-    "⬇️ Κατέβασε αναφορά «Μαθητές με σύγκρουση στην ίδια τάξη» (όλα τα sheets)",
-    data=build_conflict_in_same_class_report(xl).getvalue(),
-    file_name=f"conflict_in_same_class_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    type="primary"
-)
+    st.download_button(
+        "⬇️ Κατέβασε αναφορά «Μαθητές με σύγκρουση στην ίδια τάξη» (όλα τα sheets)",
+        data=build_conflict_in_same_class_report(xl).getvalue(),
+        file_name=f"conflict_in_same_class_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
 
